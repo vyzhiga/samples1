@@ -1,0 +1,22 @@
+{{ $count := add1 .Values.redisCouplesCount }}
+{{ range $i, $e := untilStep 1 (int $count) 1 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis{{ . }}
+  labels:
+    app: redis-couple{{ . }}
+spec:
+  selector:
+    app: redis-couple{{ . }}
+  type:
+    NodePort
+  ports:
+  - port: {{ add $.Values.redis.masterPort .}}
+    nodePort: {{ add $.Values.redis.masterNodePort .}}
+    name: redis-master{{ . }}
+  - port: {{ add $.Values.redis.slavePort .}}
+    nodePort: {{ add $.Values.redis.slaveNodePort .}}
+    name: redis-slave{{ . }}
+{{end}}

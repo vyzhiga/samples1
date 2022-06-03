@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-sentinel
+  labels:
+    app: redis-sentinel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  serviceName: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      terminationGracePeriodSeconds: 10
+      initContainers:
+      - name: copy
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        command: ["bash", "-c", "cp /redis-master/sentinel.conf /redis-master-data/ && chmod 666 /redis-master-data/sentinel.conf"]
+        volumeMounts:
+        - mountPath: /redis-master
+          name: sentinel-conf
+        - mountPath: /redis-master-data
+          name: data
+      containers:
+      - name: redis-sentinel
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        args:
+          - /redis-master-data/sentinel.conf
+          - --port {{ .Values.sentinel.port }}
+          - --sentinel
+        resources:
+          {{- toYaml $.Values.sentinelResources | nindent 12 }}
+        ports:
+        - containerPort: {{ .Values.sentinel.port }}
+        volumeMounts:
+        - mountPath: /redis-master-data
+          name: data
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: sentinel-conf
+        configMap:
+          name: sentinel-configmap
+      imagePullSecrets:
+      - name: regcred

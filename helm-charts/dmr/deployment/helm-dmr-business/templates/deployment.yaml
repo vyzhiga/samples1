@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+spec:
+  strategy:
+    type: {{ .Values.strategy }}
+  selector:
+    matchLabels:
+      app: {{ .Values.name }}
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name }}
+      annotations:
+        timestamp: "{{ now | date "20060102150405" }}"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - {{ .Values.name }}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: {{ .Values.name }}
+          envFrom:
+            - configMapRef:
+                name: "{{ .Values.name }}-nosecret-env"
+            - secretRef:
+                name: "{{ .Values.name }}-secret-env"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          # image: "{{ .Values.image.repository }}/{{ .Values.image.name }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}/{{ .Values.image.name }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.container.port }}
+              protocol: TCP
+          {{- if .Values.probes.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.container.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.container.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # audit
+            - name: cert-store
+              mountPath: {{ .Values.audit.kafka.ssl_keystore }}
+              subPath: audit.pfx
+              readOnly: true
+            - name: cert-store
+              mountPath: {{ .Values.audit.kafka.ssl_truststore }}
+              subPath: kafka-trust.pfx
+              readOnly: true
+            # role model
+            - name: cert-store
+              mountPath: "{{ .Values.role_model.ssl_keystore_path }}"
+              subPath: "kafka-acl-keystore.pfx"
+              readOnly: true
+            - name: cert-store
+              mountPath: "{{ .Values.role_model.ssl_truststore_path }}"
+              subPath: "kafka-acl-truststore.pfx"
+              readOnly: true
+            # ECM
+            {{ if and (.Values.business_app.EMC_SSL_ENABLED) (.Values.business_app.EMC_KEYSTORE_ENABLED) }}
+            - name: cert-store
+              mountPath: "{{ .Values.business_app.ECM_KEYSTORE_PATH }}"
+              subPath: "ecm_keystore.jks"
+              readOnly: true
+            {{- end }}
+            {{ if and (.Values.business_app.EMC_SSL_ENABLED) (.Values.business_app.EMC_TRUSTSTORE_ENABLED) }}
+            - name: cert-store
+              mountPath: "{{ .Values.business_app.ecm_truststore_path }}"
+              subPath: "ecm_truststore.jks"
+              readOnly: true
+            {{- end }}
+            # SD
+            {{ if and (.Values.business_app.SESSION_DATA_SSL_ENABLED) (.Values.business_app.SESSION_DATA_KEYSTORE_ENABLED) }}
+            - name: cert-store
+              mountPath: "{{ .Values.business_app.SESSION_DATA_KEYSTORE_PATH }}"
+              subPath: "sd_keystore.jks"
+              readOnly: true
+            {{- end }}
+            {{ if and (.Values.business_app.SESSION_DATA_SSL_ENABLED) (.Values.business_app.SESSION_DATA_TRUSTSTORE_ENABLED) }}
+            - name: cert-store
+              mountPath: "{{ .Values.business_app.SESSION_DATA_TRUSTSTORE_PATH }}"
+              subPath: "sd_truststore.jks"
+              readOnly: true
+            {{- end }}
+        # Fluentbit sidecar container
+        - name: {{ .Values.name }}-fluentbit-journal
+          image: "{{ .Values.image.repository }}/{{ .Values.fluentbit.image.name }}:{{ .Values.fluentbit.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.fluentbit.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.name }}-fluentbit-journal-env-config
+          env:
+            - name: CLIENT_KAFKA_CERT_KEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.fluentbit.secretPass }}
+                  key: client-kafka-cert-key-password
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: logging-pki-client
+              mountPath: /fluent-bit/etc/cert
+              readOnly: true
+          ports:
+            - containerPort: {{ .Values.fluentbit.port }}
+              protocol: TCP
+          resources: {{ toYaml .Values.fluentbit.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "while nc -zw2 {{ .Values.Name }} {{ .Values.service.port }}; do sleep 1; done; sleep 5"]
+        # jaeger-agent sidecar container
+        - name: {{ .Values.name }}-jaeger-agent
+          image: "{{ .Values.image.repository }}/{{ .Values.tracing.image.name }}:{{ .Values.tracing.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.tracing.image.pullPolicy }}
+          env:
+            - name: REPORTER_GRPC_TLS_ENABLED
+              value: 'true'
+            - name: REPORTER_GRPC_TLS_SKIP_HOST_VERIFY
+              value: '{{ .Values.tracing.skip_tls }}'
+            - name: REPORTER_GRPC_TLS_SERVER_NAME
+              value: '{{ .Values.tracing.grpc_server_name }}'
+            - name: REPORTER_GRPC_TLS_CA
+              value: /opt/jaeger/cert/tracing-ca-cert.pem
+            - name: REPORTER_GRPC_TLS_CERT
+              value: /opt/jaeger/cert/tracing-client-cert.pem
+            - name: REPORTER_GRPC_TLS_KEY
+              value: /opt/jaeger/cert/tracing-client-cert-key.pem
+          args:
+            - "--reporter.grpc.host-port=dns:///{{ .Values.tracing.grpc_server_name }}:{{ .Values.tracing.grpc_server_port }}"
+            - "--reporter.type=grpc"
+            - "--log-level={{ .Values.tracing.log_level }}"
+          volumeMounts:
+            - name: cert-store
+              mountPath: /opt/jaeger/cert/tracing-ca-cert.pem
+              subPath: "tracing-ca-cert.pem"
+              readOnly: true
+            - name: cert-store
+              mountPath: /opt/jaeger/cert/tracing-client-cert.pem
+              subPath: "tracing-client-cert.pem"
+              readOnly: true
+            - name: cert-store
+              mountPath: /opt/jaeger/cert/tracing-client-cert-key.pem
+              subPath: "tracing-client-cert-key.pem"
+              readOnly: true
+          ports:
+            - containerPort: 5775
+              name: zk-compact-trft
+              protocol: UDP
+            - containerPort: 5778
+              name: config-rest
+              protocol: TCP
+            - containerPort: 6831
+              name: jg-compact-trft
+              protocol: UDP
+            - containerPort: 6832
+              name: jg-binary-trft
+              protocol: UDP
+            - containerPort: 14271
+              name: admin-http
+              protocol: TCP
+          resources: {{ toYaml .Values.tracing.resources | nindent 12 }}
+      volumes:
+        - name: logging-pki-client
+          secret:
+            secretName: {{ .Values.fluentbit.secret }}
+        - name: cert-store
+          secret:
+            secretName: "{{ .Values.name }}-cert-secret"

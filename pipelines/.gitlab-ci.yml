@@ -1,0 +1,350 @@
+variables:
+  BUILD_SMS_APP: smscontrol-status-reader
+  PUSH_STATUS_APP: push-status-reader
+
+stages:
+  - test
+  - build
+  - deploy-test
+  - build-prod
+  - deploy-prod
+  - deploy-prod-docker
+
+test-job:
+  tags:
+    - duo-test
+  stage: test
+  script:
+    - echo "Start tests $CI_PROJECT_NAME"
+    - mvn clean test -U -pl $BUILD_SMS_APP,$PUSH_STATUS_APP -am
+
+test-job-docker:
+  tags:
+    - duo-prod-docker
+  stage: test
+  script:
+    - echo "Start tests $CI_PROJECT_NAME"
+    - mvn clean test -U -pl $BUILD_SMS_APP,$PUSH_STATUS_APP -am
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+
+build-job-test:
+  tags:
+    - duo-test
+  stage: build
+  script:
+    - echo "Building $CI_PROJECT_NAME, apps - $BUILD_SMS_APP and $PUSH_STATUS_APP"
+    - if [[ ! -d "/home/$USER/work-sr" ]]; then mkdir -p /home/$USER/work-sr; fi
+    - rm -rf /home/$USER/work-sr/*
+    - mvn clean package -U -pl $BUILD_SMS_APP,$PUSH_STATUS_APP -am -DskipTests=true
+    - rsync -a --include '*/' --include '*.jar' --include '*.conf' --exclude '*' ./ /home/$USER/work-sr/
+  artifacts:
+    expire_in: 2h
+    paths:
+      - ./*/target/*.jar
+      - ./*/supervisor/*.conf
+      - ./smscontrol-status-reader/run.sh
+
+build-job-prod-docker:
+  tags:
+    - duo-prod-docker
+  stage: build
+  script:
+    - echo "Building $CI_PROJECT_NAME, apps - $BUILD_SMS_APP and $PUSH_STATUS_APP"
+    - mvn clean package -U -pl $BUILD_SMS_APP,$PUSH_STATUS_APP -am -DskipTests=true
+  artifacts:
+    expire_in: 2h
+    paths:
+      - ./*/target/*.jar
+      - ./*/supervisor/*.conf
+      - ./smscontrol-status-reader/run.sh
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+
+##
+## Test stage
+##
+.deploy-staging:
+  tags:
+    - duo-test
+  script:
+    - echo "This job deploys $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - |
+      if [[ -f "/home/$USER/.bash_profile" ]]; then
+        echo "Exists"
+        shopt -s expand_aliases
+        source /home/$USER/.bash_profile
+      fi
+    - supervisorctl stop $app_name
+    - cp /home/$USER/work-sr/$BUILD_SMS_APP/target/*.jar /opt/app/$app_name
+    - cp /home/$USER/work-sr/$BUILD_SMS_APP/supervisor/$app_name.conf $SV_CONFIG_PATH
+    - |
+      if [[ "$(hostname)" = "pilot" ]]; then
+        sed -i 's/profiles.active=test/profiles.active=test/g' $SV_CONFIG_PATH/$app_name.conf;
+      fi
+    - supervisorctl reread
+    - supervisorctl update $app_name
+    - echo "cp /home/$USER/work-sr/$BUILD_SMS_APP/target/*.jar /opt/app/$app_name"
+    - echo "cp /home/$USER/work-sr/$BUILD_SMS_APP/supervisor/$app_name.conf $SV_CONFIG_PATH"
+    - supervisorctl start $app_name
+  when: manual
+
+deploy-status-reader-test:
+  stage: deploy-test
+  extends: .deploy-staging
+  before_script:
+    - export app_name=status-reader
+
+deploy-status-reader-camp-test:
+  stage: deploy-test
+  extends: .deploy-staging
+  before_script:
+    - export app_name=status-reader-camp
+
+deploy-status-reader-camp-yesterday-test:
+  stage: deploy-test
+  extends: .deploy-staging
+  before_script:
+    - export app_name=status-reader-camp-yesterday
+
+deploy-status-reader-yesterday-test:
+  stage: deploy-test
+  extends: .deploy-staging
+  before_script:
+    - export app_name=status-reader-yesterday
+
+deploy-status-reader-dates-test:
+  tags:
+    - duo-test
+  stage: deploy-test
+  script:
+    - echo "This job copies $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - mkdir -p /opt/app/status-reader-dates/logs
+    - cp $BUILD_SMS_APP/target/*.jar /opt/app/status-reader-dates/
+    - cp $BUILD_SMS_APP/run.sh /opt/app/status-reader-dates/
+    - chmod 0700 /opt/app/status-reader-dates/run.sh
+  when: manual
+
+deploy-push-status-reader-test:
+  tags:
+    - duo-test
+  stage: deploy-test
+  script:
+    - echo "This job deploys $PUSH_STATUS_APP from the $CI_COMMIT_BRANCH branch."
+    - |
+      if [[ -f "/home/$USER/.bash_profile" ]]; then
+        echo "Exists"
+        shopt -s expand_aliases
+        source /home/$USER/.bash_profile
+      fi
+    - supervisorctl stop $PUSH_STATUS_APP
+    - cp /home/$USER/work-sr/$PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar /opt/app/$PUSH_STATUS_APP
+    - cp /home/$USER/work-sr/$PUSH_STATUS_APP/supervisor/$PUSH_STATUS_APP.conf $SV_CONFIG_PATH
+    - |
+      if [[ "$(hostname)" = "pilot" ]]; then
+        sed -i 's/profiles.active=test/profiles.active=test/g' $SV_CONFIG_PATH/$PUSH_STATUS_APP.conf;
+      fi
+    - supervisorctl reread
+    - supervisorctl update $PUSH_STATUS_APP
+    - echo "cp /home/$USER/work-sr/$PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar /opt/app/$PUSH_STATUS_APP"
+    - supervisorctl start $PUSH_STATUS_APP
+  when: manual
+
+##
+## Prod stage
+##
+build-job-prod:
+  tags:
+    - duo-prod
+  stage: build-prod
+  script:
+    - echo "Building $CI_PROJECT_NAME, apps - $BUILD_SMS_APP and $PUSH_STATUS_APP"
+    - mvn clean package -U -pl $BUILD_SMS_APP,$PUSH_STATUS_APP -am -DskipTests=true
+  artifacts:
+    expire_in: 2h
+    paths:
+      - ./*/target/*.jar
+      - ./*/supervisor/*.conf
+      - ./smscontrol-status-reader/run.sh
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+#      when: manual
+      when: never
+
+.deploy-staging-prod:
+  tags:
+    - duo-prod
+  script:
+    - echo "This job deploys $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - supervisorctl stop $app_name
+    - cp $BUILD_SMS_APP/target/*.jar /opt/app/$app_name
+    - cp $BUILD_SMS_APP/supervisor/$app_name.conf $SV_CONFIG_PATH
+    - sed -i 's/profiles.active=test/profiles.active=prod/g' $SV_CONFIG_PATH/$app_name.conf;
+    - supervisorctl reread
+    - supervisorctl update $app_name
+    - echo "cp $BUILD_SMS_APP/target/*.jar /opt/app/$app_name"
+    - echo "cp $BUILD_SMS_APP/supervisor/$app_name.conf $SV_CONFIG_PATH"
+    - supervisorctl start $app_name
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      # when: manual
+      when: never
+
+deploy-status-reader-prod:
+  stage: deploy-prod
+  extends: .deploy-staging-prod
+  before_script:
+    - export app_name=status-reader
+
+deploy-status-reader-camp-prod:
+  stage: deploy-prod
+  extends: .deploy-staging-prod
+  before_script:
+    - export app_name=status-reader-camp
+
+deploy-status-reader-camp-yesterday-prod:
+  stage: deploy-prod
+  extends: .deploy-staging-prod
+  before_script:
+    - export app_name=status-reader-camp-yesterday
+
+deploy-status-reader-yesterday-prod:
+  stage: deploy-prod
+  extends: .deploy-staging-prod
+  before_script:
+    - export app_name=status-reader-yesterday
+
+deploy-status-reader-dates-prod:
+  tags:
+    - duo-prod
+  stage: deploy-prod
+  script:
+    - echo "This job copies $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - mkdir -p /opt/app/status-reader-dates/logs
+    - cp $BUILD_SMS_APP/target/*.jar /opt/app/status-reader-dates/
+    - cp $BUILD_SMS_APP/run.sh /opt/app/status-reader-dates/
+    - chmod 0700 /opt/app/status-reader-dates/run.sh
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      # when: manual
+      when: never
+
+deploy-push-status-reader-prod:
+  tags:
+    - duo-prod
+  stage: deploy-prod
+  script:
+    - echo "This job deploys $PUSH_STATUS_APP from the $CI_COMMIT_BRANCH branch."
+    - supervisorctl stop $PUSH_STATUS_APP
+    - cp $PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar /opt/app/$PUSH_STATUS_APP
+    - cp $PUSH_STATUS_APP/supervisor/$PUSH_STATUS_APP.conf $SV_CONFIG_PATH
+    - sed -i 's/profiles.active=test/profiles.active=prod/g' $SV_CONFIG_PATH/$PUSH_STATUS_APP.conf;
+    - supervisorctl reread
+    - supervisorctl update $PUSH_STATUS_APP
+    - echo "cp /home/$USER/work-sr/$PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar /opt/app/$PUSH_STATUS_APP"
+    - supervisorctl start $PUSH_STATUS_APP
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      # when: manual
+      when: never
+
+##
+## Prod via docker stage
+##
+.deploy-staging-prod-docker:
+  tags:
+    - duo-prod-docker
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - echo "This job deploys $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - ssh smsgw@10.79.45.73 supervisorctl stop $app_name
+    - scp $BUILD_SMS_APP/target/*.jar smsgw@10.79.45.73:/opt/app/$app_name
+    - scp $BUILD_SMS_APP/supervisor/$app_name.conf smsgw@10.79.45.73:$SV_CONFIG_PATH
+    - ssh smsgw@10.79.45.73 sed -i 's/profiles.active=test/profiles.active=prod/g' $SV_CONFIG_PATH/$app_name.conf;
+    - ssh smsgw@10.79.45.73 supervisorctl reread
+    - ssh smsgw@10.79.45.73 supervisorctl update $app_name
+    - echo "cp $BUILD_SMS_APP/target/*.jar /opt/app/$app_name"
+    - echo "cp $BUILD_SMS_APP/supervisor/$app_name.conf $SV_CONFIG_PATH"
+    - ssh smsgw@10.79.45.73 supervisorctl start $app_name
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      when: manual
+      # when: never
+
+deploy-status-reader-prod-docker:
+  stage: deploy-prod-docker
+  extends: .deploy-staging-prod-docker
+  before_script:
+    - export app_name=status-reader
+
+deploy-status-reader-camp-prod-docker:
+  stage: deploy-prod-docker
+  extends: .deploy-staging-prod-docker
+  before_script:
+    - export app_name=status-reader-camp
+
+deploy-status-reader-camp-yesterday-prod-docker:
+  stage: deploy-prod-docker
+  extends: .deploy-staging-prod-docker
+  before_script:
+    - export app_name=status-reader-camp-yesterday
+
+deploy-status-reader-yesterday-prod-docker:
+  stage: deploy-prod-docker
+  extends: .deploy-staging-prod-docker
+  before_script:
+    - export app_name=status-reader-yesterday
+
+deploy-status-reader-dates-prod-docker:
+  tags:
+    - duo-prod-docker
+  stage: deploy-prod-docker
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - echo "This job copies $BUILD_SMS_APP from the $CI_COMMIT_BRANCH branch."
+    - ssh smsgw@10.79.45.73 mkdir -p /opt/app/status-reader-dates/logs
+    - scp $BUILD_SMS_APP/target/*.jar smsgw@10.79.45.73:/opt/app/status-reader-dates/
+    - scp $BUILD_SMS_APP/run.sh smsgw@10.79.45.73:/opt/app/status-reader-dates/
+    - ssh smsgw@10.79.45.73 chmod 0700 /opt/app/status-reader-dates/run.sh
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      when: manual
+      # when: never
+
+deploy-push-status-reader-prod-docker:
+  tags:
+    - duo-prod-docker
+  stage: deploy-prod-docker
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts  
+  script:
+    - echo "This job deploys $PUSH_STATUS_APP from the $CI_COMMIT_BRANCH branch."
+    - ssh smsgw@10.79.45.73 supervisorctl stop $PUSH_STATUS_APP
+    - scp $PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar smsgw@10.79.45.73:/opt/app/$PUSH_STATUS_APP
+    - scp $PUSH_STATUS_APP/supervisor/$PUSH_STATUS_APP.conf smsgw@10.79.45.73:$SV_CONFIG_PATH
+    - ssh smsgw@10.79.45.73 sed -i 's/profiles.active=test/profiles.active=prod/g' $SV_CONFIG_PATH/$PUSH_STATUS_APP.conf;
+    - ssh smsgw@10.79.45.73 supervisorctl reread
+    - ssh smsgw@10.79.45.73 supervisorctl update $PUSH_STATUS_APP
+    - echo "cp /home/$USER/work-sr/$PUSH_STATUS_APP/target/$PUSH_STATUS_APP.jar /opt/app/$PUSH_STATUS_APP"
+    - ssh smsgw@10.79.45.73 supervisorctl start $PUSH_STATUS_APP
+  rules:
+    - if: '$CI_PROJECT_NAMESPACE == "duo-projects"'
+      when: manual
+      # when: never

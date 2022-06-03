@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    [...]
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Values.name }}
+  ports:
+    - name: "http-{{ .Values.container.port }}"
+      port: {{ .Values.service.port }}
+      protocol: TCP
+      targetPort: {{ .Values.container.port }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name }}-fluent-bit-headless
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    [...]
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: "http-{{ .Values.fluentbit.port }}"
+      port: {{ .Values.fluentbit.port }}
+      protocol: TCP
+      targetPort: {{ .Values.fluentbit.port }}
+  selector:
+    app: {{ .Values.name }}

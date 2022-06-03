@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-configmap
+data:
+  sentinel.conf: |
+{{- $count := add1 .Values.redisCouplesCount }}
+{{- range $i, $e := untilStep 1 (int $count) 1 }}
+    sentinel monitor node{{ . }} redis{{ . }} {{ add $.Values.redis.masterPort .}} 2
+    sentinel down-after-milliseconds node{{ . }} 60000
+    sentinel failover-timeout node{{ . }} 180000
+    sentinel parallel-syncs node{{ . }} 1
+    sentinel auth-pass node{{ . }} {{ $.Values.password }}
+{{ end }}

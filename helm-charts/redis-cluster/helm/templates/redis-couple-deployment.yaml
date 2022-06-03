@@ -1,0 +1,59 @@
+{{ $count := add1 .Values.redisCouplesCount }}
+{{ range $i, $e := untilStep 1 (int $count) 1 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-couple{{ . }}
+  labels:
+     app: redis-couple{{ . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-couple{{ . }}
+  template:
+    metadata:
+      labels:
+        app: redis-couple{{ . }}
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: redis-master
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        args:
+          - --port {{ add $.Values.redis.masterPort .}}
+          - --replica-announce-ip redis{{ . }}
+          - --requirepass {{ $.Values.password }}
+          - --masterauth {{ $.Values.password }}
+          - --protected-mode no
+          - --daemonize no
+          - --supervised no
+          - --appendonly no
+          - --replica-read-only yes
+        resources:
+          {{- toYaml $.Values.redisResources | nindent 12 }}
+        ports:
+          - containerPort: {{ add $.Values.redis.masterPort .}}
+      - name: redis-slave
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        args:
+          - --port {{ add $.Values.redis.slavePort .}}
+          - --replicaof redis{{ . }} {{ add $.Values.redis.masterPort .}}
+          - --replica-announce-ip redis{{ . }}
+          - --requirepass {{ $.Values.password }}
+          - --masterauth {{ $.Values.password }}
+          - --protected-mode no
+          - --daemonize no
+          - --supervised no
+          - --appendonly no
+          - --replica-read-only yes
+        resources:
+          {{- toYaml $.Values.redisResources | nindent 12 }}
+        ports:
+        - containerPort: {{ add $.Values.redis.slavePort .}}
+      imagePullSecrets:
+      - name: regcred
+{{ end }}

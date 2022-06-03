@@ -1,0 +1,56 @@
+{{- if .Values.route_f5.enabled -}}
+# balancer's route
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ .Values.name }}-f5
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+    haproxy.router.openshift.io/disable_cookies: 'true'
+spec:
+  host: {{ .Values.route_f5.host }}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: {{ .Values.route.insecureEdgeTerminationPolicy }}
+    {{- if .Values.route_f5.tls_enabled }}
+    {{- with $.Values.BEroute_F5.tls }}
+    key: |
+      {{- .key | nindent 6 }}
+    certificate: |
+      {{- .certificate | nindent 6 }}
+    {{- end }}
+    {{- end }}
+  to:
+    kind: Service
+    name: {{ .Values.name }}
+  port:
+     targetPort: {{ .Values.service.port }}
+  wildcardPolicy: None
+---
+# health-checks
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ .Values.name }}-f5-health-checks
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+    haproxy.router.openshift.io/disable_cookies: 'true'
+spec:
+  host: {{ .Values.route_f5.host }}
+  path: /actuator/health
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: None
+  to:
+    kind: Service
+    name: {{ .Values.name }}
+  port:
+     targetPort: {{ .Values.service.port }}
+  wildcardPolicy: None
+{{- end }}

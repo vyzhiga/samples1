@@ -1,0 +1,6 @@
+apiVersion: v2
+name: helm-dmr-business
+description: A Helm chart for dmr-business.
+type: application
+version: 0.1.4
+appVersion: auto

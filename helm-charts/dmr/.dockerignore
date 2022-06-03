@@ -1,0 +1,8 @@
+#ignore all
+**
+#except
+!target/*.jar
+!.certs/*.cer
+!.ca_certs/*.cer
+#ignore in excepted
+#path form exception

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.name }}-fluentbit-journal-env-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+data:
+  KAFKA_BROKER: "{{ .Values.fluentbit.kafkaBrokers }}"
+  KAFKA_TOPICS: "{{ .Values.fluentbit.kafkaTopics }}"
+  ES_INDEX_NAME_SUFFIX: "{{ .Values.fluentbit.esIndexNameSuffix }}"
+  LOG_LEVEL: "{{ .Values.fluentbit.fluentBitLogLevel }}"

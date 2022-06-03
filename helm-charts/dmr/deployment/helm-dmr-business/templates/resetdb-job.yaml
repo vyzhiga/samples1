@@ -1,0 +1,36 @@
+{{- if .Values.resetDB.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.name }}-reset-db-{{ .Release.Revision }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+  {{- include "common.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  parallelism: 1
+  completions: 1
+  activeDeadlineSeconds: 180
+  backoffLimit: 3
+  template:
+    metadata:
+      name: {{ .Values.name }}-reset-db-{{ .Release.Revision }}
+      labels:
+        app: {{ .Values.name }}
+    spec:
+      containers:
+      - name: {{ .Values.name }}-reset-db
+        image: "{{ .Values.resetDB.image.repo }}/{{ .Values.resetDB.image.name }}:{{ .Values.resetDB.image.tag }}"
+        imagePullPolicy: {{ .Values.resetDB.image.pullPolicy }}
+        command:
+          - sh
+          - -c
+          - |
+            set -x
+            echo 'DROP OWNED BY "{{ .Values.db.user }}"' > /tmp/reset_db.sql
+            export PGPASSWORD="{{ .Values.db.password }}"
+            psql -U "{{ .Values.db.user }}" -h {{ .Values.db.host }} -p {{ .Values.db.port }} -d {{ .Values.db.name }} -f /tmp/reset_db.sql
+      restartPolicy: OnFailure
+{{- end }}

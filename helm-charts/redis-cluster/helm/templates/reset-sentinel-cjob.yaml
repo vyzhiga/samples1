@@ -1,0 +1,23 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: reset-sentinel-job
+spec:
+  schedule: "59 */1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          terminationGracePeriodSeconds: 10
+          containers:
+          - name: reset-sentinel-job
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            command:
+            - bash
+            - -c
+            - set -ex; for i in {0..2}; do redis-cli -h redis-sentinel-$i.redis-sentinel --no-auth-warning -p {{ .Values.sentinel.port }} -a {{ .Values.password }} SENTINEL RESET *; sleep 30; done; exit 0
+          restartPolicy: OnFailure
